@@ -577,7 +577,11 @@ def submit_with_orchestrator(
                 "decode_nodes": config.resources.decode_nodes,
                 "prefill_workers": config.resources.num_prefill,
                 "decode_workers": config.resources.num_decode,
+                "agg_nodes": config.resources.agg_nodes,
                 "agg_workers": config.resources.num_agg,
+                "gpus_per_prefill": config.resources.gpus_per_prefill,
+                "gpus_per_decode": config.resources.gpus_per_decode,
+                "gpus_per_agg": config.resources.gpus_per_agg,
             },
             # Backend and frontend
             "backend_type": config.backend_type,

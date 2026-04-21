@@ -11,6 +11,48 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict
 
+_RESOURCE_BACKFILL_KEYS = (
+    "agg_nodes",
+    "gpus_per_agg",
+    "gpus_per_prefill",
+    "gpus_per_decode",
+    "prefill_nodes",
+    "decode_nodes",
+)
+
+
+def _merge_resources_from_config_yaml(resources_data: dict, run_path: str) -> dict:
+    """Backfill missing resource fields from the run's config.yaml.
+
+    Older metadata JSONs omit fields like ``agg_nodes`` and ``gpus_per_agg``,
+    which makes aggregated-mode total-GPU accounting collapse to zero. The
+    run directory always contains a ``config.yaml`` that has the full
+    resource spec, so we read it as a fallback when the JSON is incomplete.
+    """
+    if all(resources_data.get(key) for key in _RESOURCE_BACKFILL_KEYS):
+        return resources_data
+
+    import os
+
+    config_path = os.path.join(run_path, "config.yaml")
+    if not os.path.exists(config_path):
+        return resources_data
+
+    try:
+        import yaml
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        return resources_data
+
+    cfg_resources = cfg.get("resources") or {}
+    merged = dict(resources_data)
+    for key in _RESOURCE_BACKFILL_KEYS:
+        if not merged.get(key) and cfg_resources.get(key):
+            merged[key] = cfg_resources[key]
+    return merged
+
 
 @dataclass
 class RunMetadata:
@@ -36,6 +78,10 @@ class RunMetadata:
     # Aggregated mode fields
     agg_nodes: int = 0
     agg_workers: int = 0
+    # Per-worker GPU counts (allow explicit override from config, e.g. gpus_per_agg < gpus_per_node)
+    gpus_per_prefill: int = 0
+    gpus_per_decode: int = 0
+    gpus_per_agg: int = 0
 
     @classmethod
     def from_json(cls, json_data: dict, run_path: str) -> "RunMetadata":
@@ -61,49 +107,59 @@ class RunMetadata:
                 path=run_path,
                 run_date=run_meta.get("run_date", ""),
                 container=run_meta.get("container", ""),
-                prefill_nodes=run_meta.get("prefill_nodes", 0),
-                decode_nodes=run_meta.get("decode_nodes", 0),
-                prefill_workers=run_meta.get("prefill_workers", 0),
-                decode_workers=run_meta.get("decode_workers", 0),
+                prefill_nodes=run_meta.get("prefill_nodes", 0) or 0,
+                decode_nodes=run_meta.get("decode_nodes", 0) or 0,
+                prefill_workers=run_meta.get("prefill_workers", 0) or 0,
+                decode_workers=run_meta.get("decode_workers", 0) or 0,
                 mode=mode,
                 job_name=run_meta.get("job_name", ""),
                 partition=run_meta.get("partition", ""),
                 model_dir=run_meta.get("model_dir", ""),
-                gpus_per_node=run_meta.get("gpus_per_node", 0),
+                gpus_per_node=run_meta.get("gpus_per_node", 0) or 0,
                 gpu_type=run_meta.get("gpu_type", ""),
                 enable_multiple_frontends=run_meta.get("enable_multiple_frontends", False),
                 num_additional_frontends=run_meta.get("num_additional_frontends", 0),
-                agg_nodes=run_meta.get("agg_nodes", 0),
-                agg_workers=run_meta.get("agg_workers", 0),
+                agg_nodes=run_meta.get("agg_nodes", 0) or 0,
+                agg_workers=run_meta.get("agg_workers", 0) or 0,
+                gpus_per_prefill=run_meta.get("gpus_per_prefill", 0) or 0,
+                gpus_per_decode=run_meta.get("gpus_per_decode", 0) or 0,
+                gpus_per_agg=run_meta.get("gpus_per_agg", 0) or 0,
             )
         else:
             # New format (flat structure)
             model_data = json_data.get("model", {})
             resources_data = json_data.get("resources", {})
-            agg_workers = resources_data.get("agg_workers", 0)
+            agg_workers = resources_data.get("agg_workers", 0) or 0
 
             # Determine mode based on agg_workers
             mode = "aggregated" if agg_workers > 0 else "disaggregated"
+
+            # Older JSONs dropped some resource fields (agg_nodes, gpus_per_agg, ...).
+            # Fill them in from the run's config.yaml if present, so total_gpus is accurate.
+            resources_data = _merge_resources_from_config_yaml(resources_data, run_path)
 
             return cls(
                 job_id=json_data.get("job_id", ""),
                 path=run_path,
                 run_date=json_data.get("generated_at", ""),
                 container=model_data.get("container", ""),
-                prefill_nodes=resources_data.get("prefill_nodes", 0),
-                decode_nodes=resources_data.get("decode_nodes", 0),
-                prefill_workers=resources_data.get("prefill_workers", 0),
-                decode_workers=resources_data.get("decode_workers", 0),
+                prefill_nodes=resources_data.get("prefill_nodes", 0) or 0,
+                decode_nodes=resources_data.get("decode_nodes", 0) or 0,
+                prefill_workers=resources_data.get("prefill_workers", 0) or 0,
+                decode_workers=resources_data.get("decode_workers", 0) or 0,
                 mode=mode,
                 job_name=json_data.get("job_name", ""),
                 partition="",  # Not present in new format
                 model_dir=model_data.get("path", ""),  # Use model path as model_dir
-                gpus_per_node=resources_data.get("gpus_per_node", 0),
+                gpus_per_node=resources_data.get("gpus_per_node", 0) or 0,
                 gpu_type=resources_data.get("gpu_type", ""),
                 enable_multiple_frontends=False,  # Not present in new format
                 num_additional_frontends=0,  # Not present in new format
-                agg_nodes=resources_data.get("agg_nodes", 0),  # Not present in new format
+                agg_nodes=resources_data.get("agg_nodes", 0) or 0,
                 agg_workers=agg_workers,
+                gpus_per_prefill=resources_data.get("gpus_per_prefill", 0) or 0,
+                gpus_per_decode=resources_data.get("gpus_per_decode", 0) or 0,
+                gpus_per_agg=resources_data.get("gpus_per_agg", 0) or 0,
             )
 
     @property
@@ -113,9 +169,17 @@ class RunMetadata:
 
     @property
     def total_gpus(self) -> int:
-        """Calculate total GPU count for both modes."""
+        """Calculate total GPU count (GPUs actually consumed by workers)."""
         if self.is_aggregated:
-            return self.agg_nodes * self.gpus_per_node
+            # Prefer agg_workers * gpus_per_agg so configs with gpus_per_agg < gpus_per_node
+            # (e.g. DP=4 workers on an 8-GPU node) report the GPUs the workload actually uses.
+            if self.agg_workers > 0 and self.gpus_per_agg > 0:
+                return self.agg_workers * self.gpus_per_agg
+            if self.agg_nodes > 0 and self.gpus_per_node > 0:
+                return self.agg_nodes * self.gpus_per_node
+            return self.agg_workers * self.gpus_per_node
+        if self.gpus_per_prefill > 0 or self.gpus_per_decode > 0:
+            return (self.prefill_workers * self.gpus_per_prefill) + (self.decode_workers * self.gpus_per_decode)
         return (self.prefill_nodes + self.decode_nodes) * self.gpus_per_node
 
     @property

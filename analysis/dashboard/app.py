@@ -280,12 +280,11 @@ def render_sidebar(logs_dir, runs):
     for run in filtered_runs:
         if run.metadata.is_aggregated:
             run_id = f"{run.job_id}_{run.metadata.agg_workers}A_{run.metadata.run_date}"
-            total_gpus = run.metadata.agg_nodes * run.metadata.gpus_per_node
             # Format: id | xA | numgpus | isl/osl | gputype
             label = (
                 f"{run.job_id} | "
                 f"{run.metadata.agg_workers}A | "
-                f"{total_gpus} GPUs | "
+                f"{run.total_gpus} GPUs | "
                 f"{run.profiler.isl}/{run.profiler.osl}"
             )
         else:
@@ -293,8 +292,12 @@ def render_sidebar(logs_dir, runs):
                 f"{run.job_id}_{run.metadata.prefill_workers}P_{run.metadata.decode_workers}D_{run.metadata.run_date}"
             )
             # Calculate from metadata (straight from {jobid}.json)
-            prefill_gpus = run.metadata.prefill_nodes * run.metadata.gpus_per_node
-            decode_gpus = run.metadata.decode_nodes * run.metadata.gpus_per_node
+            if run.metadata.gpus_per_prefill > 0 or run.metadata.gpus_per_decode > 0:
+                prefill_gpus = run.metadata.prefill_workers * run.metadata.gpus_per_prefill
+                decode_gpus = run.metadata.decode_workers * run.metadata.gpus_per_decode
+            else:
+                prefill_gpus = (run.metadata.prefill_nodes or 0) * run.metadata.gpus_per_node
+                decode_gpus = (run.metadata.decode_nodes or 0) * run.metadata.gpus_per_node
             # Format: id | xPyD | numgpusP/numgpusD | isl/osl | gputype
             label = (
                 f"{run.job_id} | "

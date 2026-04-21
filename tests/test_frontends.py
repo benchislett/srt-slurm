@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for frontend implementations (SGLang and Dynamo)."""
+"""Tests for frontend implementations (SGLang, Dynamo, and vLLM native)."""
 
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from srtctl.frontends import DynamoFrontend, SGLangFrontend, get_frontend
+from srtctl.frontends import DynamoFrontend, SGLangFrontend, VLLMFrontend, get_frontend
 
 # ============================================================================
 # get_frontend() Tests
@@ -30,13 +30,16 @@ class TestGetFrontend:
         assert isinstance(frontend, SGLangFrontend)
         assert frontend.type == "sglang"
 
+    def test_get_vllm_frontend(self):
+        """get_frontend('vllm') returns VLLMFrontend."""
+        frontend = get_frontend("vllm")
+        assert isinstance(frontend, VLLMFrontend)
+        assert frontend.type == "vllm"
+
     def test_get_unknown_frontend_raises(self):
         """get_frontend() with unknown type raises ValueError."""
         with pytest.raises(ValueError, match="Unknown frontend type"):
             get_frontend("unknown")
-
-        with pytest.raises(ValueError, match="Unknown frontend type"):
-            get_frontend("vllm")
 
 
 # ============================================================================
@@ -66,6 +69,76 @@ class TestFrontendProperties:
         """SGLangFrontend uses /workers endpoint."""
         frontend = SGLangFrontend()
         assert frontend.health_endpoint == "/workers"
+
+    def test_vllm_type(self):
+        """VLLMFrontend.type is 'vllm'."""
+        assert VLLMFrontend().type == "vllm"
+
+    def test_vllm_health_endpoint(self):
+        """VLLMFrontend uses /health endpoint."""
+        assert VLLMFrontend().health_endpoint == "/health"
+
+
+# ============================================================================
+# vLLM Native Frontend Behavior
+# ============================================================================
+
+
+class TestVLLMFrontend:
+    """Tests specific to the vllm-native frontend."""
+
+    def test_parse_health_reports_ready(self):
+        """A 200 response (empty body) is treated as ready; counts echo expectations."""
+        frontend = VLLMFrontend()
+        result = frontend.parse_health({}, expected_prefill=0, expected_decode=1)
+        assert result.ready is True
+        assert result.prefill_ready == 0
+        assert result.prefill_expected == 0
+        assert result.decode_ready == 1
+        assert result.decode_expected == 1
+
+    def test_start_frontends_returns_empty(self):
+        """No separate frontend process — the worker serves OpenAI directly."""
+        frontend = VLLMFrontend()
+        topology = MagicMock()
+        topology.public_port = 8000
+        procs = frontend.start_frontends(
+            topology=topology,
+            runtime=MagicMock(),
+            config=MagicMock(),
+            backend=MagicMock(),
+            backend_processes=[],
+        )
+        assert procs == []
+
+    def test_dp_collapses_to_single_process(self):
+        """For DP+EP under frontend.type=vllm, VLLMProtocol collapses to one
+        process per endpoint so vLLM can fan out DP workers internally (and we
+        don't launch N srun workers all trying to bind :8000)."""
+        from srtctl.backends import VLLMProtocol, VLLMServerConfig
+        from srtctl.core.topology import Endpoint
+
+        backend = VLLMProtocol(
+            vllm_config=VLLMServerConfig(
+                aggregated={"data-parallel-size": 8, "enable-expert-parallel": True},
+            )
+        )
+        endpoint = Endpoint(
+            mode="agg",
+            index=0,
+            nodes=("node0",),
+            gpu_indices=frozenset(range(8)),
+            gpus_per_node=8,
+        )
+
+        # Default (dynamo) — expands to one process per GPU.
+        dynamo_procs = backend.endpoints_to_processes([endpoint])
+        assert len(dynamo_procs) == 8
+
+        # vllm-native — collapses to one process owning all GPUs.
+        vllm_procs = backend.endpoints_to_processes([endpoint], frontend_type="vllm")
+        assert len(vllm_procs) == 1
+        assert vllm_procs[0].gpu_indices == frozenset(range(8))
 
 
 # ============================================================================

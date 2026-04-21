@@ -11,6 +11,7 @@ This module provides:
 - wait_for_model(): Wait for model with worker count validation (replaces bash version)
 - check_dynamo_health(): Parse dynamo /health response for worker counts
 - check_sglang_router_health(): Parse sglang /workers response for worker counts
+- check_vllm_native_health(): Treat a successful vLLM /health (empty body) as ready
 """
 
 import logging
@@ -175,6 +176,34 @@ def check_dynamo_health(
         prefill_ready=prefill_count,
         prefill_expected=expected_prefill,
         decode_ready=decode_count,
+        decode_expected=expected_decode,
+    )
+
+
+def check_vllm_native_health(
+    response_json: dict,
+    expected_prefill: int,
+    expected_decode: int,
+) -> WorkerHealthResult:
+    """Check health for vLLM's native OpenAI server.
+
+    vLLM's `/health` endpoint returns HTTP 200 with an empty body once the
+    engine has finished warmup. The HTTP-200 status is what conveys readiness;
+    there is no worker-count payload to parse. The caller passes an empty dict
+    for `response_json` when the body is empty (the wait loop handles this).
+
+    Aggregated single-worker scope only: the sum of prefill+decode is treated
+    as one logical worker that maps to decode (matching agg convention used by
+    check_dynamo_health / check_sglang_router_health).
+    """
+    # Reaching this helper at all implies HTTP 200 succeeded.
+    total_expected = expected_prefill + expected_decode
+    return WorkerHealthResult(
+        ready=True,
+        message=f"Model is ready (vLLM native /health responded 200; {total_expected} worker(s) expected).",
+        prefill_ready=expected_prefill,
+        prefill_expected=expected_prefill,
+        decode_ready=expected_decode,
         decode_expected=expected_decode,
     )
 
@@ -375,6 +404,15 @@ def wait_for_model(
             n_prefill,
             n_decode,
         )
+    elif frontend_type == "vllm":
+        health_url = f"http://{host}:{port}/health"
+        logger.info(
+            "Polling %s every %.1fs for vLLM native /health (expecting %d prefills + %d decodes)",
+            health_url,
+            poll_interval,
+            n_prefill,
+            n_decode,
+        )
     else:
         health_url = f"http://{host}:{port}/health"
         logger.info(
@@ -404,11 +442,18 @@ def wait_for_model(
         try:
             response = requests.get(health_url, timeout=5.0)
             if response.status_code == 200:
-                response_json = response.json()
+                # vLLM native /health returns 200 with an empty body — status alone is ready.
+                # Other frontends include a JSON payload with worker counts.
+                if frontend_type == "vllm":
+                    response_json: dict = {}
+                else:
+                    response_json = response.json()
 
                 # Check worker counts based on frontend type
                 if frontend_type == "sglang":
                     result = check_sglang_router_health(response_json, n_prefill, n_decode)
+                elif frontend_type == "vllm":
+                    result = check_vllm_native_health(response_json, n_prefill, n_decode)
                 else:
                     result = check_dynamo_health(response_json, n_prefill, n_decode)
 

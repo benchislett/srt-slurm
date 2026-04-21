@@ -143,13 +143,19 @@ class WorkerStageMixin:
         )
 
         # Environment variables
-        env_to_set = {
+        env_to_set: dict[str, str] = {
             "HEAD_NODE_IP": self.runtime.head_node_ip,
-            "ETCD_ENDPOINTS": f"http://{self.runtime.nodes.infra}:2379",
-            "NATS_SERVER": f"nats://{self.runtime.nodes.infra}:4222",
-            "DYN_SYSTEM_PORT": str(process.sys_port),
-            "DYN_REQUEST_PLANE": "nats",
         }
+        # Dynamo-specific vars — skipped for the vllm-native path which doesn't run NATS/etcd.
+        if self.config.frontend.type == "dynamo":
+            env_to_set.update(
+                {
+                    "ETCD_ENDPOINTS": f"http://{self.runtime.nodes.infra}:2379",
+                    "NATS_SERVER": f"nats://{self.runtime.nodes.infra}:4222",
+                    "DYN_SYSTEM_PORT": str(process.sys_port),
+                    "DYN_REQUEST_PLANE": "nats",
+                }
+            )
 
         # Add OTEL env vars (before mode-specific env so OTEL_SERVICE_NAME can be overridden)
         env_to_set.update(build_otel_env(self.config.observability, mode))
@@ -273,12 +279,17 @@ class WorkerStageMixin:
         )
 
         # Environment variables
-        env_to_set = {
+        env_to_set: dict[str, str] = {
             "HEAD_NODE_IP": self.runtime.head_node_ip,
-            "ETCD_ENDPOINTS": f"http://{self.runtime.nodes.infra}:2379",
-            "NATS_SERVER": f"nats://{self.runtime.nodes.infra}:4222",
-            "DYN_SYSTEM_PORT": str(leader.sys_port),
         }
+        if self.config.frontend.type == "dynamo":
+            env_to_set.update(
+                {
+                    "ETCD_ENDPOINTS": f"http://{self.runtime.nodes.infra}:2379",
+                    "NATS_SERVER": f"nats://{self.runtime.nodes.infra}:4222",
+                    "DYN_SYSTEM_PORT": str(leader.sys_port),
+                }
+            )
 
         # Add OTEL env vars (before mode-specific env so OTEL_SERVICE_NAME can be overridden)
         env_to_set.update(build_otel_env(self.config.observability, mode))

@@ -995,7 +995,10 @@ class FrontendConfig:
     """Frontend/router configuration.
 
     Attributes:
-        type: Frontend type - "dynamo" (default) or "sglang"
+        type: Frontend type - "dynamo" (default), "sglang", or "vllm".
+            "vllm" runs the worker's native OpenAI server directly and
+            supports aggregated single-worker configs only (no NATS/etcd,
+            no Dynamo install).
         enable_multiple_frontends: Scale with nginx + multiple routers
         num_additional_frontends: Additional routers beyond master (default: 9)
         nginx_container: Custom nginx container image (default: nginx:1.27.4)
@@ -1110,6 +1113,7 @@ class SrtConfig:
         """Validate configuration after initialization."""
         self._validate_profiling()
         self._validate_telemetry()
+        self._validate_vllm_frontend()
 
     def _validate_profiling(self):
         """Validate profiling configuration matches serving mode."""
@@ -1165,6 +1169,31 @@ class SrtConfig:
                 )
             if (r.agg_workers or 0) <= 0:
                 raise ValidationError("Aggregated mode requires agg_workers to be > 0.")
+
+    def _validate_vllm_frontend(self):
+        """Enforce MVP scope for the vllm-native frontend.
+
+        Only aggregated single-worker on the vllm backend is supported. P/D
+        disaggregation and multi-worker routing stay on frontend.type=dynamo.
+        """
+        if self.frontend.type != "vllm":
+            return
+        if self.backend.type != "vllm":
+            raise ValidationError(
+                f"frontend.type=vllm requires backend.type=vllm (got backend.type={self.backend.type!r})."
+            )
+        r = self.resources
+        if r.num_prefill > 0 or r.num_decode > 0:
+            raise ValidationError(
+                "frontend.type=vllm supports aggregated mode only; "
+                f"got num_prefill={r.num_prefill}, num_decode={r.num_decode}. "
+                "Use frontend.type=dynamo for prefill/decode disaggregation."
+            )
+        if r.num_agg != 1:
+            raise ValidationError(
+                f"frontend.type=vllm currently supports a single aggregated worker; got agg_workers={r.num_agg}. "
+                "Multi-worker routing is not implemented for the vllm-native frontend."
+            )
 
     def _validate_telemetry(self):
         """Validate telemetry configuration."""

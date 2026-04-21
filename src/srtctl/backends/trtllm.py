@@ -146,8 +146,13 @@ class TRTLLMProtocol:
         self,
         endpoints: list["Endpoint"],
         base_sys_port: int = 8081,
+        frontend_type: str = "dynamo",
     ) -> list["Process"]:
-        """Convert endpoints to processes."""
+        """Convert endpoints to processes.
+
+        ``frontend_type`` is accepted for protocol compatibility; TRTLLM's
+        process layout doesn't vary by frontend.
+        """
         from srtctl.core.topology import endpoints_to_processes
 
         return endpoints_to_processes(endpoints, base_sys_port=base_sys_port)

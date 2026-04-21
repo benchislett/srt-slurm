@@ -193,10 +193,17 @@ class VLLMProtocol:
         self,
         endpoints: list[Endpoint],
         base_sys_port: int = 8081,
+        frontend_type: str = "dynamo",
     ) -> list[Process]:
         """Convert endpoints to processes.
 
-        For DP+EP mode (data-parallel-size set), creates one process per GPU.
+        For DP+EP mode (data-parallel-size set), creates one process per GPU
+        — except when ``frontend_type == "vllm"``, in which case we launch a
+        single process per endpoint and let vLLM's native server spawn its own
+        DP children internally (see ``--data-parallel-size``). That matches the
+        standard TP path and avoids multiple srun'd workers colliding on
+        :8000 / CUDA_VISIBLE_DEVICES.
+
         For standard TP mode, creates one process per node.
         """
         from srtctl.core.topology import NodePortAllocator, Process, endpoints_to_processes
@@ -204,8 +211,9 @@ class VLLMProtocol:
         # Check if any endpoint uses DP mode
         has_dp_mode = any(self._is_dp_mode(ep.mode) for ep in endpoints)
 
-        if not has_dp_mode:
-            # Standard TP mode: one process per node
+        if not has_dp_mode or frontend_type == "vllm":
+            # Standard TP mode (or vllm-native DP): one process per node.
+            # For vllm-native, vLLM handles DP fan-out inside the single process.
             return endpoints_to_processes(endpoints, base_sys_port=base_sys_port)
 
         # DP+EP mode: one process per GPU
@@ -291,7 +299,9 @@ class VLLMProtocol:
             process: The process to start
             endpoint_processes: All processes for this endpoint (for multi-node)
             runtime: Runtime context with paths and settings
-            frontend_type: Frontend type (currently only "dynamo" supported for vLLM)
+            frontend_type: Frontend type - "dynamo" wraps vLLM with dynamo.vllm for
+                NATS/etcd-based discovery; "vllm" launches vLLM's native OpenAI
+                server (aggregated single-worker only).
             nsys_prefix: Optional nsys profiling command prefix
             dump_config_path: Path to dump config JSON
         """
@@ -317,6 +327,33 @@ class VLLMProtocol:
 
         # Start with nsys prefix if provided
         cmd: list[str] = list(nsys_prefix) if nsys_prefix else []
+
+        if frontend_type == "vllm":
+            if mode != "agg":
+                raise ValueError(
+                    "frontend.type=vllm only supports aggregated mode (num_agg>0, num_prefill=0, num_decode=0). "
+                    f"Got mode={mode!r}. Use frontend.type=dynamo for prefill/decode disaggregation."
+                )
+            cmd.extend(
+                [
+                    "python3",
+                    "-m",
+                    "vllm.entrypoints.openai.api_server",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8000",
+                    "--model",
+                    model_arg,
+                    "--served-model-name",
+                    served_model_name,
+                ]
+            )
+            # Drop Dynamo-wrapper-only keys so they don't leak into vLLM's CLI
+            # (`vllm.entrypoints.openai.api_server` doesn't accept them and would hard-fail).
+            config.pop("connector", None)
+            cmd.extend(_config_to_cli_args(config))
+            return cmd
 
         # Base command - use dynamo.vllm module
         cmd.extend(

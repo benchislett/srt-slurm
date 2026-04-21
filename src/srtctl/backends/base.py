@@ -92,8 +92,14 @@ class BackendProtocol(Protocol):
         self,
         endpoints: list["Endpoint"],
         base_sys_port: int = 8081,
+        frontend_type: str = "dynamo",
     ) -> list["Process"]:
-        """Convert logical endpoints to physical processes."""
+        """Convert logical endpoints to physical processes.
+
+        frontend_type lets backends collapse multi-process DP expansions into a
+        single process when the frontend runs vLLM natively and manages its own
+        DP workers internally.
+        """
         ...
 
     def build_worker_command(

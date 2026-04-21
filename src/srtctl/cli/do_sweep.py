@@ -93,14 +93,27 @@ class SweepOrchestrator(
     @functools.cached_property
     def backend_processes(self) -> list[Process]:
         """Compute physical process topology from endpoints (cached)."""
-        return self.backend.endpoints_to_processes(self.endpoints)
+        return self.backend.endpoints_to_processes(
+            self.endpoints,
+            frontend_type=self.config.frontend.type,
+        )
 
-    def start_head_infrastructure(self, registry: ProcessRegistry) -> ManagedProcess:
+    def start_head_infrastructure(self, registry: ProcessRegistry) -> ManagedProcess | None:
         """Start NATS and etcd on the infra node.
 
         When etcd_nats_dedicated_node is enabled, services run on a dedicated node.
         Otherwise, they run on the head node (default behavior).
+
+        Returns None when the frontend does not need NATS/etcd (e.g. the
+        vllm-native frontend, which serves OpenAI directly from the worker
+        process and does no cross-worker discovery).
         """
+        if self.config.frontend.type == "vllm":
+            logger.info(
+                "Skipping NATS/etcd startup: frontend.type=vllm does not require Dynamo infrastructure"
+            )
+            return None
+
         infra_node = self.runtime.nodes.infra
         logger.info("Starting infrastructure services (NATS, etcd)")
         logger.info("Infra node: %s", infra_node)
@@ -224,7 +237,8 @@ class SweepOrchestrator(
             # Stage 1: Head infrastructure (NATS, etcd)
             reporter.report(JobStatus.STARTING, JobStage.HEAD_INFRASTRUCTURE, "Starting head infrastructure")
             head_proc = self.start_head_infrastructure(registry)
-            registry.add_process(head_proc)
+            if head_proc is not None:
+                registry.add_process(head_proc)
 
             # Stage 2: Workers
             reporter.report(JobStatus.WORKERS, JobStage.WORKERS, "Starting workers")

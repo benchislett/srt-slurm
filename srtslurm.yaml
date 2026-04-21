@@ -1,0 +1,28 @@
+# SRT SLURM Configuration
+# This file provides cluster-specific defaults and settings for srtctl
+
+# Default SLURM settings
+default_account: "coreai_comparch_inferencex"
+default_partition: "batch"
+default_time_limit: "4:00:00"
+
+# Resource defaults
+gpus_per_node: 8
+network_interface: ""
+
+# Path to srtctl repo root (where scripts/templates/ lives)
+# Auto-detected from current directory
+srtctl_root: "/lustre/fsw/coreai_cserve_dev/bchislett/srt-slurm"
+
+model_paths:
+  deepseek-v32-fp4: "/lustre/fsw/coreai_cserve_dev/bchislett/hf_models/models--nvidia--DeepSeek-V3.2-NVFP4"
+  kimi25-fp4: "/lustre/fsw/coreai_cserve_dev/bchislett/hf_models/models--nvidia--Kimi-K2.5-NVFP4"
+
+containers:
+  vllm_stable: "/lustre/fsw/coreai_cserve_dev/bchislett/containers/vllm_v0.19.1.sqsh"
+  # vllm_stable: docker://vllm/vllm-openai:v0.19.1-cu130
+
+use_gpus_per_node_directive: false # Set false if cluster doesn't support --gpus-per-node
+use_segment_sbatch_directive: true # Set false if cluster doesn't support --segment
+use_exclusive_sbatch_directive: true # Set true if cluster requires --exclusive
+

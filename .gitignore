@@ -41,7 +41,7 @@ uv.lock
 Thumbs.db
 
 # Cluster and cloud config (contains credentials and cluster-specific settings)
-srtslurm.yaml
+# srtslurm.yaml
 srtslurm.toml
 
 # Compute-arch uv binary (installed by make setup)

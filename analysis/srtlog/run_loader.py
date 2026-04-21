@@ -559,6 +559,7 @@ class RunLoader:
 
                 row = {
                     "Run ID": run_id,
+                    "Job Name": run.metadata.job_name,
                     "Run Date": run.metadata.run_date,
                     "Profiler": run.profiler.profiler_type,
                     "ISL": run.profiler.isl,

@@ -696,7 +696,8 @@ def create_pareto_graph(
                 marker={"size": 10, "color": colors[idx % len(colors)]},
                 line={"color": colors[idx % len(colors)], "width": 2},
                 text=[
-                    f"Run: {row['Run ID']}<br>"
+                    (f"Job: {row['Job Name']}<br>" if "Job Name" in run_data.columns and row["Job Name"] else "")
+                    + f"Run: {row['Run ID']}<br>"
                     f"Concurrency: {row['Concurrency']}<br>"
                     f"Output TPS/User: {format_value(row['Output TPS/User'])}<br>"
                     f"{y_metric}: {format_value(row[y_metric])}<br>"

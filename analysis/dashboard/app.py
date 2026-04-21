@@ -182,8 +182,9 @@ def render_sidebar(logs_dir, runs):
         osl = run.profiler.osl
         gpu_type = run.metadata.gpu_type
         gpu_suffix = f" [{gpu_type}]" if gpu_type else ""
+        name_suffix = f" | {run.metadata.job_name}" if run.metadata.job_name else ""
         # Include job ID to ensure unique labels
-        label = f"Job {run.job_id} | {topology} | {isl}/{osl}{gpu_suffix}"
+        label = f"Job {run.job_id}{name_suffix} | {topology} | {isl}/{osl}{gpu_suffix}"
 
         # Add tags to label if they exist
         if run.tags:
@@ -278,10 +279,12 @@ def render_sidebar(logs_dir, runs):
     # Build legend labels for graphs
     run_legend_labels = {}
     for run in filtered_runs:
+        name_prefix = f"{run.metadata.job_name} | " if run.metadata.job_name else ""
         if run.metadata.is_aggregated:
             run_id = f"{run.job_id}_{run.metadata.agg_workers}A_{run.metadata.run_date}"
-            # Format: id | xA | numgpus | isl/osl | gputype
+            # Format: name | id | xA | numgpus | isl/osl | gputype
             label = (
+                f"{name_prefix}"
                 f"{run.job_id} | "
                 f"{run.metadata.agg_workers}A | "
                 f"{run.total_gpus} GPUs | "
@@ -298,8 +301,9 @@ def render_sidebar(logs_dir, runs):
             else:
                 prefill_gpus = (run.metadata.prefill_nodes or 0) * run.metadata.gpus_per_node
                 decode_gpus = (run.metadata.decode_nodes or 0) * run.metadata.gpus_per_node
-            # Format: id | xPyD | numgpusP/numgpusD | isl/osl | gputype
+            # Format: name | id | xPyD | numgpusP/numgpusD | isl/osl | gputype
             label = (
+                f"{name_prefix}"
                 f"{run.job_id} | "
                 f"{run.metadata.prefill_workers}P{run.metadata.decode_workers}D | "
                 f"{prefill_gpus}/{decode_gpus} | "

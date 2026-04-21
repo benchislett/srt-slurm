@@ -1,0 +1,50 @@
+name: "kimi_k25_nvfp4_b300_tp4_vllm_pdl_sweep"
+
+model:
+  path: "kimi25-fp4" # Uses alias from srtslurm.yaml
+  container: "vllm_stable" # Uses alias from srtslurm.yaml
+  precision: "fp4"
+
+identity:
+  model:
+    repo: "nvidia/Kimi-K2.5-NVFP4"
+  container:
+    image: "vllm/vllm-openai:v0.19.1-cu130"
+  frameworks:
+    vllm: "0.19.1+cu130"
+
+resources:
+  gpu_type: "b300"
+  gpus_per_node: 8
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 4
+
+frontend:
+  type: "vllm"
+
+backend:
+  type: vllm
+
+  aggregated_environment:
+    TRTLLM_ENABLE_PDL: "1"
+    TORCHINDUCTOR_ENABLE_PDL: "1"
+
+  vllm_config:
+    aggregated:
+      kv-cache-dtype: "fp8"
+      served-model-name: "nvidia/Kimi-K2.5-NVFP4"
+      gpu-memory-utilization: 0.95
+      tensor-parallel-size: 4
+      trust-remote-code: true
+      max-num-batched-tokens: 32768
+      max-model-len: 32768
+      max-cudagraph-capture-size: 128
+      no-enable-prefix-caching: true
+
+benchmark:
+  type: "sa-bench"
+  isl: 8192
+  osl: 1024
+  concurrencies: [1, 2, 4, 8, 16, 32, 64, 128]
+  req_rate: "inf"
